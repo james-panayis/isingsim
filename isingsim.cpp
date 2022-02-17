@@ -109,12 +109,13 @@ template<class T, std::size_t Dimension, std::int64_t... Sizes>
 struct Periodic_array_internal
 {
   using Base = Periodic_array_internal_base<T, Dimension, Sizes...>;
+  using Sub  = Base::value_type;
 
   // Subscript operators
-  constexpr Base::value_type& operator[](std::int64_t index)
+  constexpr Sub& operator[](std::int64_t index)
   { return base[mod(index, base.size())]; }
 
-  constexpr const Base::value_type& operator[](std::int64_t index) const
+  constexpr const Sub& operator[](std::int64_t index) const
   { return base[mod(index, base.size())]; }
 
   template<std::integral... Indexes>
@@ -145,6 +146,22 @@ struct Periodic_array_internal
   { return base.size(); }
 
 
+  // Fill with random data
+  constexpr void randomize(auto distribution, std::mt19937& generator)
+  {
+    if constexpr (Dimension == 1)
+    {
+      for (T& value : base)
+        value = distribution(generator);
+    }
+    else
+    {
+      for (Sub& subspace : base)
+        subspace.randomize(distribution, generator);
+    }
+  }
+
+
   // Store
   Base base;
 };
@@ -152,7 +169,6 @@ struct Periodic_array_internal
 // Exposed Periodic_array (does not need Dimension template parameter, unlike Periodic_array_internal)
 template<class T, std::int64_t... Sizes>
 using Periodic_array = Periodic_array_internal<T, sizeof...(Sizes), Sizes...>;
-
 
 
 template<std::size_t n>
@@ -444,7 +460,7 @@ int main(int argc, char* argv[])
 	}*/
 
   // Specify dimension and sizes
-  using Space = Periodic_array<bool, 8, 128, 256>;
+  using Space = Periodic_array<bool, 8, 128, 256>; //dimensions
 
   // Create arrays
   Space space1;
@@ -453,20 +469,13 @@ int main(int argc, char* argv[])
   // Create random number generators
   std::random_device rd;
   std::mt19937 gen(rd());
-  // give "true" 1/4 of the time
-  // give "false" 3/4 of the time
-  std::bernoulli_distribution dran(0.5); //d(0.25);
-
   std::uniform_real_distribution<double> u(0.0, std::nextafter(1.0, std::numeric_limits<double>::max()));
-  std::bernoulli_distribution rb(0.12); //d(0.25);
+  std::bernoulli_distribution rb(0.1); //fraction of states to examine on each pass
 
+  // Randomize initial state
+  space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
 
-  for (auto& row : space1)
-    for (auto& bit : row)
-      for (auto& bit2 : bit)
-        bit2 = dran(gen);
-
-  // Initial frame
+  // Print initial frame
   make_ppm(space1.base[0], "000000.ppm");
 
   // Memoize exponential function (minor performance hack)
