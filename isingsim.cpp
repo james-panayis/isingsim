@@ -21,6 +21,7 @@
 #include <vector>
 #include <filesystem>
 #include <random>
+#include <span>
 
 // Shorter static_cast
 template<class T>
@@ -105,11 +106,18 @@ template<class T, std::size_t Dimension, std::int64_t... Sizes>
 using Periodic_array_internal_base = decltype(make_periodic_array_internal_base<T, Dimension, Sizes...>());
 
 // Internal implementation of Periodic_array
-template<class T, std::size_t Dimension, std::int64_t... Sizes>
+template<class T, std::size_t N, std::int64_t... S>
 struct Periodic_array_internal
 {
-  using Base = Periodic_array_internal_base<T, Dimension, Sizes...>;
+  static constexpr std::size_t Dimension = N;
+  static constexpr std::array<std::int64_t, Dimension> Sizes{{S...}};
+
+  using Base = Periodic_array_internal_base<T, Dimension, S...>;
   using Sub  = Base::value_type;
+
+  // Subtype should be underlying type if and only if we are 1-dimensional
+  static_assert((Dimension==1) == (std::is_same_v<Sub, T>));
+
 
   // Subscript operators
   constexpr Sub& operator[](std::int64_t index)
@@ -119,12 +127,36 @@ struct Periodic_array_internal
   { return base[mod(index, base.size())]; }
 
   template<std::integral... Indexes>
-  constexpr auto& operator[](std::int64_t index, Indexes... indexes)
-  { return (*this)[index][indexes...]; }
+  constexpr auto& operator[](std::int64_t index, Indexes... other_indexes)
+  { return (*this)[index][other_indexes...]; }
 
   template<std::integral... Indexes>
-  constexpr const auto& operator[](std::int64_t index, Indexes... indexes) const
-  { return (*this)[index][indexes...]; }
+  constexpr const auto& operator[](std::int64_t index, Indexes... other_indexes) const
+  { return (*this)[index][other_indexes...]; }
+
+  constexpr auto& operator[](std::span<std::int64_t, Dimension> indexes)
+  { 
+    if constexpr (Dimension == 1)
+    {
+      return (*this)[indexes[0]];
+    }
+    else
+    {
+      return (*this)[indexes[0]][indexes.template last<Dimension-1>()];
+    }
+  }
+
+  constexpr const auto& operator[](std::span<std::int64_t, Dimension> indexes) const
+  { 
+    if constexpr (Dimension == 1)
+    {
+      return (*this)[indexes[0]];
+    }
+    else
+    {
+      return (*this)[indexes[0]][indexes.template last<Dimension-1>()];
+    }
+  }
 
 
   // Iterators
@@ -158,6 +190,25 @@ struct Periodic_array_internal
     {
       for (Sub& subspace : base)
         subspace.randomize(distribution, generator);
+    }
+  }
+
+
+  // Calculate energy change caused by flipping a value
+  constexpr std::int64_t flip_energy(std::span<std::int64_t, Dimension> indexes) const
+  {
+    if constexpr (Dimension == 1)
+    {
+      return  ((*this)[indexes[0]-1] == (*this)[indexes[0]])
+             +((*this)[indexes[0]+1] == (*this)[indexes[0]]);
+    }
+    else
+    {
+      auto subindexes = indexes.template last<Dimension - 1>();
+
+      return  ((*this)[indexes[0]-1][subindexes] == (*this)[indexes[0]][subindexes])
+             +((*this)[indexes[0]+1][subindexes] == (*this)[indexes[0]][subindexes])
+             +(*this)[indexes[0]].flip_energy(subindexes);
     }
   }
 
@@ -481,9 +532,43 @@ int main(int argc, char* argv[])
   // Memoize exponential function (minor performance hack)
   auto memo_exp = memo::memoize( [](const double x) constexpr { return std::exp(x); } );
 
-  auto step = [&](auto& start_space, auto& end_space) constexpr
+  const auto step = [&](auto& start_space, auto& end_space) constexpr
   {
-    for (std::size_t d = 0; d < start_space.size(); d++)
+    /////// NEW CODE ///////
+    //
+    std::array<std::int64_t, Space::Dimension> indexes = {};
+
+    const auto increment = [&]() constexpr -> bool
+    {
+      for (std::size_t i = 0; i < Space::Dimension; ++i)
+      {
+        ++indexes[i];
+
+        if (indexes[i] >= Space::Sizes[i])
+          indexes[i] = 0;
+        else
+          return true;
+      }
+      return false;
+    };
+
+    do
+    {
+      if (!(rb(gen)))
+      {
+        end_space[indexes] = start_space[indexes];
+        continue;
+      }
+
+      const double Ediff = sc<double>(-(start_space.flip_energy(indexes) - 3) * -4);
+
+      end_space[indexes] = start_space[indexes] ^ ( ((Ediff<0) || ((memo_exp(-Ediff/1.0) > u(gen)))));
+
+    } while (increment());
+
+    /////// OLD CODE ///////
+
+    /*for (std::size_t d = 0; d < start_space.size(); d++)
     {
       for (std::size_t r = 0; r < start_space[0].size(); r++)
       {
@@ -513,12 +598,13 @@ int main(int argc, char* argv[])
 
           end_space[d,r,c] = start_space[d,r,c] 
                            ^ ( ((Ediff<0) || ((memo_exp(-Ediff/1.0) > u(gen)))) 
-                               /*&& rb(gen)*/ );
+                               //&& rb(gen)
+                                              );
                                //&& (0.8225 > u(gen)) );
 
         }
       }
-    }
+    }*/
   };
 
 
@@ -527,7 +613,7 @@ int main(int argc, char* argv[])
   {
     step(space1, space2);
 
-    //make_ppm(space2, fmt::format("{:0>6}", i)+"a.ppm");
+    //make_ppm(space2.base[0], fmt::format("{:0>6}", i)+"a.ppm");
 
     step(space2, space1);
 
