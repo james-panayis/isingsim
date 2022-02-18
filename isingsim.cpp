@@ -70,6 +70,12 @@ constexpr std::int64_t mod(const std::int64_t value, const std::int64_t max)
   return (value % max + max) % max;
 }
 
+// Clamp
+constexpr std::int64_t clm(const std::int64_t value, const std::int64_t max)
+{
+  return std::clamp(value, std::int64_t{0}, max);
+}
+
 // Identity
 constexpr std::int64_t idt(const std::int64_t value, const std::int64_t max [[maybe_unused]])
 {
@@ -220,6 +226,24 @@ struct Periodic_array_internal
 // Exposed Periodic_array (does not need Dimension template parameter, unlike Periodic_array_internal)
 template<class T, std::int64_t... Sizes>
 using Periodic_array = Periodic_array_internal<T, sizeof...(Sizes), Sizes...>;
+
+
+// Go to the next element of a multidimensional array
+template<class Space>
+constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
+{
+  for (std::size_t i = 0; i < Space::Dimension; ++i)
+  {
+    ++indexes[i];
+
+    if (indexes[i] >= Space::Sizes[i])
+      indexes[i] = 0;
+    else
+      return true;
+  }
+  return false;
+}
+
 
 
 template<std::size_t n>
@@ -394,87 +418,50 @@ inline void drawline(const Image& data, Vec<2> p1, Vec<2> p2, floatable auto thi
 
 
 
-
-
-
-// returns the average of the locations of all the 'ATOM's in a pdb file
-Vec<3> get_COM(const std::string filename)
+// Create a ppm file of a state, squishing down extra dimensions into 2
+template<class Space>
+void make_ppm(Space& data, const std::string filename)
 {
-	std::ifstream infile(filename);
+  std::array<std::int64_t, Space::Dimension> indexes{};
 
-	Vec<3> average{};
-	int count = 0;
+  std::span<std::int64_t, 2> output_indexes = std::span(indexes).template last<2>();
 
-	for (std::string line; std::getline(infile, line); )
-	{
-		if (!line.starts_with("ATOM"))
-			continue;
+  constexpr std::array<std::int64_t, 2> output_sizes{Space::Sizes.end()[-2], Space::Sizes.end()[-1]};
 
-		Vec<3> pos;
+  std::array<std::array<double, output_sizes[1]>, output_sizes[0]> output{};
 
-		std::string xs = line.substr(30, 8);
-		std::string ys = line.substr(38, 8);
-		std::string zs = line.substr(46, 8);
+  // Loop through all points
+  do
+  {
+    output[output_indexes[0]][output_indexes[1]] += data[indexes];
+  } while (increment<Space>(indexes));
 
-		auto errx = sscanf(xs.c_str(), "%f", &pos[0]);
-		auto erry = sscanf(ys.c_str(), "%f", &pos[1]);
-		auto errz = sscanf(zs.c_str(), "%f", &pos[2]);
-
-		if ((errx == EOF) || (erry == EOF) || (errz == EOF))
-		{
-			std::cout << "ERROR: coordinate missing in line: " << line << std::endl;
-			continue;
-		}
-
-		average = average + pos;
-
-		count++;
-	}
-
-	infile.close();
-
-	return average / static_cast<float>(count);
-}
-
-
-void make_ppm(auto& data, const std::string filename)
-{
+  // Create temporary file
   std::string tmp = "graphtest";
   //std::stringstream tomakeuid(loc);
   //while(std::getline(tomakeuid, tmp, '/')) {}
 
   std::ofstream graphfile("/tmp/" + tmp);
 
-  std::uint32_t stretch = 1;
+  std::cout << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
+  graphfile << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
+  
+  double layers = std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
 
-  //std::cout << "coords: " << data.size() << "  " << data[0].size() << "  " << data[1].size() << std::endl;
-  std::cout << "P3 " << data[0].size() * stretch << " " << data.size() * stretch << " 255" << std::endl;
-  graphfile << "P3 " << data[0].size() * stretch << " " << data.size() * stretch << " 255" << std::endl;
-  //std::cout << "P3 " << 1000 * stretch << " " << 1000 * stretch << " 255" << std::endl;
-  //graphfile << "P3 " << 1000 * stretch << " " << 1000 * stretch << " 255" << std::endl;
-
-  for (auto& row : data)
+  for (auto& row : output)
   {
-    for (std::uint32_t i = 0; i < stretch; i++)
+    for (auto& bit : row)
     {
-      for (auto& bit : row)
-      {
-        for (std::uint32_t j = 0; j < stretch; j++)
-        {
-          graphfile << sc<int>(bit) * 255 << " " << sc<int>(bit) * 255 << " " << sc<int>(bit) * 255 << " ";
-        }
-        //if (i==0) std::cout << bit << " ";
-        //if (i==0) fmt::print("{} ", sc<int>(bit));
-      }
-      graphfile << '\n';
+      graphfile << sc<int>(bit * 255.0 / layers) << " " << sc<int>(bit * 255.0 / layers) << " " << sc<int>(bit * 255.0 / layers) << " ";
     }
-    //std::cout << '\n';
+    graphfile << '\n';
   }
 
-  std::cout << "done" << std::endl;
+  std::cout << "done generating ppm" << std::endl;
 
   graphfile.close();
 
+  // Copy temporary file to final location
   std::filesystem::remove(filename);
   std::filesystem::copy("/tmp/" + tmp, filename);
   std::filesystem::remove("/tmp/" + tmp);
@@ -511,47 +498,35 @@ int main(int argc, char* argv[])
 	}*/
 
   // Specify dimension and sizes
-  using Space = Periodic_array<bool, 8, 128, 256>; //dimensions
+  using Space = Periodic_array<bool, 128, 128, 128>;//8, 128, 256>; //dimensions
 
   // Create arrays
   Space space1;
   Space space2 [[maybe_unused]];
 
-  // Create random number generators
+  // Create random number machinery
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<double> u(0.0, std::nextafter(1.0, std::numeric_limits<double>::max()));
-  std::bernoulli_distribution rb(0.1); //fraction of states to examine on each pass
+  std::bernoulli_distribution rb(0.12); //fraction of states to examine on each pass
 
   // Randomize initial state
   space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
 
   // Print initial frame
-  make_ppm(space1.base[0], "000000.ppm");
+  make_ppm(space1, "000000.ppm");
 
   // Memoize exponential function (minor performance hack)
   auto memo_exp = memo::memoize( [](const double x) constexpr { return std::exp(x); } );
 
+  // Perform one iteration with input start_space, outputting to end_space
   const auto step = [&](auto& start_space, auto& end_space) constexpr
   {
     /////// NEW CODE ///////
-    //
-    std::array<std::int64_t, Space::Dimension> indexes = {};
+    
+    std::array<std::int64_t, Space::Dimension> indexes{};
 
-    const auto increment = [&]() constexpr -> bool
-    {
-      for (std::size_t i = 0; i < Space::Dimension; ++i)
-      {
-        ++indexes[i];
-
-        if (indexes[i] >= Space::Sizes[i])
-          indexes[i] = 0;
-        else
-          return true;
-      }
-      return false;
-    };
-
+    // Loop through all points
     do
     {
       if (!(rb(gen)))
@@ -560,11 +535,11 @@ int main(int argc, char* argv[])
         continue;
       }
 
-      const double Ediff = sc<double>(-(start_space.flip_energy(indexes) - 3) * -4);
+      const double Ediff = sc<double>((start_space.flip_energy(indexes) - sc<int64_t>(Space::Dimension)) * 4);
 
-      end_space[indexes] = start_space[indexes] ^ ( ((Ediff<0) || ((memo_exp(-Ediff/1.0) > u(gen)))));
+      end_space[indexes] = start_space[indexes] ^ ( (Ediff < 0) || (memo_exp(-Ediff/1.0) > u(gen)) );
 
-    } while (increment());
+    } while (increment<Space>(indexes));
 
     /////// OLD CODE ///////
 
@@ -609,15 +584,15 @@ int main(int argc, char* argv[])
 
 
   // Main loop
-  for (int i = 1; i < 3000; i++)
+  for (int i = 1; i < 12000; i++)
   {
     step(space1, space2);
 
-    //make_ppm(space2.base[0], fmt::format("{:0>6}", i)+"a.ppm");
+    //make_ppm(space2, fmt::format("{:0>6}", i)+"a.ppm");
 
     step(space2, space1);
 
-    if (i%5==0) make_ppm(space1.base[0], fmt::format("{:0>6}", i)+".ppm");
+    if (i%15==0) make_ppm(space1, fmt::format("{:0>6}", i)+".ppm");
   }
 
   return EXIT_SUCCESS;
