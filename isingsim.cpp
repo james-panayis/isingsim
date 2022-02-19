@@ -189,6 +189,20 @@ struct Periodic_array_internal
   }
 
 
+  // Return the 2D slice through the last 2 dimensions
+  constexpr const auto& slice2D() const
+  {
+    if constexpr (Dimension == 2)
+    {
+      return (*this);
+    }
+    else
+    {
+      return base[0].slice2D();
+    }
+  }
+
+
   // Store
   Base base;
 };
@@ -215,8 +229,11 @@ constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
 }
 
 
-// Create a ppm file of a state, squishing down extra dimensions into 2
-template<class Space>
+constexpr bool SLICE  = true;
+constexpr bool SQUISH = false;
+
+// Create a ppm file of a state, either squishing down extra dimensions into 2 or taking a 2D slice
+template<bool Slice_Instead_Of_Squish = SLICE, class Space>
 void make_ppm(Space& data, const std::string filename)
 {
   std::array<std::int64_t, Space::Dimension> indexes{};
@@ -230,7 +247,14 @@ void make_ppm(Space& data, const std::string filename)
   // Loop through all points
   do
   {
-    output[output_indexes[0]][output_indexes[1]] += data[indexes];
+    if constexpr (Slice_Instead_Of_Squish)
+    {
+      output[output_indexes[0]][output_indexes[1]] = data.slice2D()[output_indexes];
+    }
+    else
+    {
+      output[output_indexes[0]][output_indexes[1]] += data[indexes];
+    }
   } while (increment<Space>(indexes));
 
   // Create temporary file
@@ -243,7 +267,7 @@ void make_ppm(Space& data, const std::string filename)
   std::cout << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   graphfile << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   
-  double layers = std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
+  constexpr double layers = Slice_Instead_Of_Squish ? 1 : std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
 
   for (auto& row : output)
   {
@@ -295,7 +319,7 @@ int main(int argc, char* argv[])
 	}*/
 
   // Specify dimension and sizes
-  using Space = Periodic_array<bool, 128, 128, 128>;//8, 128, 256>; //dimensions
+  using Space = Periodic_array<bool, 16, 128, 128>;//8, 128, 256>; //dimensions
 
   // Create arrays
   Space space1;
@@ -309,9 +333,6 @@ int main(int argc, char* argv[])
 
   // Randomize initial state
   space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
-
-  // Print initial frame
-  make_ppm(space1, "000000.ppm");
 
   // Map from number of identical adjacent spins to chance of flipping
   constexpr auto flip_probabilities = []
@@ -388,9 +409,10 @@ int main(int argc, char* argv[])
     }*/
   };
 
+  make_ppm<SQUISH>(space1, "000000.ppm");
 
   // Main loop
-  for (int i = 1; i < 12000; i++)
+  for (int i = 1; i <= 900; i++)
   {
     step(space1, space2);
 
@@ -398,7 +420,7 @@ int main(int argc, char* argv[])
 
     step(space2, space1);
 
-    if (i%15==0) make_ppm(space1, fmt::format("{:0>6}", i)+".ppm");
+    if (i%3==0) make_ppm<SQUISH>(space1, fmt::format("{:0>6}", i)+".ppm");
   }
 
   return EXIT_SUCCESS;
