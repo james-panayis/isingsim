@@ -5,10 +5,6 @@
 #define FMT_HEADER_ONLY 1
 #include "fmt/format.h"
 
-#include "memo/memo.hpp"
-
-#include <cxxabi.h>
-
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -36,32 +32,6 @@ constexpr auto get(Ts&&... ts)
 {
   return std::get<I>(std::forward_as_tuple(ts...));
 }
-
-/*// Define mdarray
-
-// This should never be called; only exists to generate return type
-template<class T, std::size_t Dimension, std::array<std::int64_t, Dimension> Sizes>
-consteval auto make_mdarray() {
-  throw "calling function make_mdarray";
-  if constexpr (Dimension != 1)
-  {
-    constexpr std::array<std::int64_t, Dimension - 1> new_indexes = [&]()
-    {
-      std::array<std::int64_t, Dimension - 1> n;
-      for (std::size_t i = 0; i < Dimension - 1; i++)
-        n[i] = Sizes[i+1];
-      return n;
-    }();
-    return std::array<decltype(make_mdarray<T, Dimension - 1, new_indexes>()), Sizes[0]>();
-  }
-  else
-  {
-    return std::array<T, Sizes[0]>();
-  }
-}
-
-template<class T, std::size_t Dimension, std::array<std::int64_t, Dimension> Sizes>
-using mdarray = decltype(make_mdarray<T, Dimension, Sizes>());*/
 
 
 // Signed modulo
@@ -200,8 +170,8 @@ struct Periodic_array_internal
   }
 
 
-  // Calculate energy change caused by flipping a value
-  constexpr std::int64_t flip_energy(std::span<std::int64_t, Dimension> indexes) const
+  // Calculate how many neighbours (interacting points) of a point are in the same state/spin as the point
+  constexpr std::int64_t count_identical_interactions(std::span<std::int64_t, Dimension> indexes) const
   {
     if constexpr (Dimension == 1)
     {
@@ -214,7 +184,7 @@ struct Periodic_array_internal
 
       return  ((*this)[indexes[0]-1][subindexes] == (*this)[indexes[0]][subindexes])
              +((*this)[indexes[0]+1][subindexes] == (*this)[indexes[0]][subindexes])
-             +(*this)[indexes[0]].flip_energy(subindexes);
+             +(*this)[indexes[0]].count_identical_interactions(subindexes);
     }
   }
 
@@ -243,179 +213,6 @@ constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
   }
   return false;
 }
-
-
-
-template<std::size_t n>
-using Vec = std::array<float, n>;
-
-template<std::size_t n>
-Vec<n> operator-(Vec<n> a, Vec<n> b)
-{
-	Vec<n> out{};
-
-	out[0] = a[0] - b[0];
-	out[1] = a[1] - b[1];
-	out[2] = a[2] - b[2];
-
-	return out;
-}
-
-template<std::size_t n>
-Vec<n> operator+(Vec<n> a, Vec<n> b)
-{
-	Vec<n> out{};
-
-	out[0] = a[0] + b[0];
-	out[1] = a[1] + b[1];
-	out[2] = a[2] + b[2];
-
-	return out;
-}
-
-template<std::size_t n>
-Vec<n> operator/(Vec<n> a, float b)
-{
-	Vec<n> out{};
-
-	out[0] = a[0] / b;
-	out[1] = a[1] / b;
-	out[2] = a[2] / b;
-
-	return out;
-}
-
-template<std::size_t n>
-Vec<n> operator*(Vec<n> a, float b)
-{
-	Vec<n> out{};
-
-	out[0] = a[0] * b;
-	out[1] = a[1] * b;
-	out[2] = a[2] * b;
-
-	return out;
-}
-
-template<std::size_t n>
-Vec<n> operator*(float b, Vec<n> a)
-{
-	return a * b;
-}
-
-//returns the square magnitude of a Vec
-template<std::size_t n>
-float dot(Vec<n> v, Vec<n> w)
-{
-	float val{0};
-	
-	for (std::size_t i = 0; i < n; i++)
-		val += v[i] * w[i];
-	
-	return val;
-}
-
-//returns the square magnitude of a Vec
-template<std::size_t n>
-inline float getsqmag(Vec<n> v)
-{
-	return dot(v, v);
-}
-
-//returns the magnitude of a Vec
-template<std::size_t n>
-inline float getmag(Vec<n> v)
-{
-	return std::sqrt(getsqmag(v));
-}
-
-
-//returns a Vec<3> perpendicular to the input Vec<3>
-Vec<3> getperp(Vec<3> v)
-{
-	Vec<3> out;
-
-	out[0] = 1.0f;
-	out[1] = 1.0f;
-	out[2] = - (v[0] + v[1]) / (v[2] + 0.00001f);
-
-	out = out / getmag(out);
-
-	return out;
-}
-
-
-// Return minimum distance between line segment vw and point p
-float dist(Vec<2> v, Vec<2> w, Vec<2> p) {
-  const float l2 = getsqmag(v - w);  // i.e. |w-v|^2 -  avoid a sqrt
-  if (l2 == 0.0f) return getmag(p - v);   // v == w case
-  // Consider the line extending the segment, parameterized as v + t (w - v)
-  // Project point p onto the line, which is where t = [(p-v) . (w-v)] / |w-v|^2
-  // Clamp t from [0,1] to handle points outside the segment vw
-  const float t = std::clamp(dot(p - v, w - v) / l2, 0.0f, 1.0f);
-  const Vec<2> projection = v + t * (w - v);  // Projection falls on the segment
-  return getmag(p - projection);
-}
-
-
-using Pixel = std::array<std::uint32_t, 3>;
-
-Pixel combine(Pixel p, Pixel q, float f)
-{
-	return Pixel{
-		static_cast<std::uint32_t>((1-f) * static_cast<float>(p[0]) + f * static_cast<float>(q[0])),
-		static_cast<std::uint32_t>((1-f) * static_cast<float>(p[1]) + f * static_cast<float>(q[1])),
-		static_cast<std::uint32_t>((1-f) * static_cast<float>(p[2]) + f * static_cast<float>(q[2]))
-	};
-}
-
-using Image = std::vector<std::vector<Pixel>>;
-
-template<class F>
-concept floatable = std::convertible_to<F, float>;
-
-//template<std::convertible_to<float>... F>// requires (std::convertible_to<F, float>)
-void drawlinei(const Image& data, Vec<2> p1, Vec<2> p2, floatable auto thickness, Pixel color, floatable auto opacity)
-{
-	for (std::size_t i = 0; i < data.size(); i++)
-		for (std::size_t j = 0; j < data[i].size(); j++)
-		{
-			//float dist = std::numeric_limits<float>::max();
-
-			Vec<2> pc = {
-				(static_cast<float>(j) + 0.5f) / static_cast<float>(data[i].size()),
-				(static_cast<float>(i) + 0.5f) / static_cast<float>(data.size())
-			};
-			
-			/*for (float d = 0; d <= 1; d += 1.0f/16.0f)
-			{
-				float x = (1.0f-d)*p1[0] + d*p2[0];
-				float y = (1.0f-d)*p1[1] + d*p2[1];
-				
-				dist = std::min(dist, (x-pc[0])*(x-pc[0]) + (y-pc[1])*(y-pc[1]));
-			}*/
-
-			float d = dist(p1, p2, pc);
-
-
-			if (d <= thickness / 2)
-				data[i][j] = combine(data[i][j], color, opacity);
-			else
-				if (d <= thickness)
-					data[i][j] = combine(data[i][j], color, opacity * 2.0f * (thickness - d) / thickness);
-
-			//data[i][j] = combine(data[i][j], Pixel{0, 0, static_cast<uint32_t>(dist * 255.0f)}, 0.5);
-		}
-
-
-	return; 
-}
-
-inline void drawline(const Image& data, Vec<2> p1, Vec<2> p2, floatable auto thickness, Pixel color, floatable auto opacity)
-{
-	drawlinei(data, p1, p2, static_cast<float>(thickness), color, static_cast<float>(opacity));
-}
-
 
 
 // Create a ppm file of a state, squishing down extra dimensions into 2
@@ -516,8 +313,17 @@ int main(int argc, char* argv[])
   // Print initial frame
   make_ppm(space1, "000000.ppm");
 
-  // Memoize exponential function (minor performance hack)
-  auto memo_exp = memo::memoize( [](const double x) constexpr { return std::exp(x); } );
+  // Map from number of identical adjacent spins to chance of flipping
+  constexpr auto flip_probabilities = []
+  {
+    std::array<double, (2*Space::Dimension)+1> probability_table{};
+
+    for (std::size_t i = 0; i < probability_table.size(); i++) 
+    {
+      probability_table[i] = std::exp(-sc<double>((sc<std::int64_t>(i)-sc<std::int64_t>(Space::Dimension)) * 4)/1.0);
+    }
+    return probability_table;
+  }();
 
   // Perform one iteration with input start_space, outputting to end_space
   const auto step = [&](auto& start_space, auto& end_space) constexpr
@@ -529,15 +335,15 @@ int main(int argc, char* argv[])
     // Loop through all points
     do
     {
+      // Keep state
       if (!(rb(gen)))
       {
         end_space[indexes] = start_space[indexes];
         continue;
       }
 
-      const double Ediff = sc<double>((start_space.flip_energy(indexes) - sc<int64_t>(Space::Dimension)) * 4);
-
-      end_space[indexes] = start_space[indexes] ^ ( (Ediff < 0) || (memo_exp(-Ediff/1.0) > u(gen)) );
+      // Examine and possibly flip state
+      end_space[indexes] = start_space[indexes] ^ ( flip_probabilities[start_space.count_identical_interactions(indexes)] > u(gen));
 
     } while (increment<Space>(indexes));
 

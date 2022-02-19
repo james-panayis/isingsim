@@ -15,7 +15,7 @@ DBGOPTIONS=-g -fsanitize=address -static-libasan
 
 all: isingsim makefile
 
-isingsim: makefile isingsim.cpp external/fmt external/memo
+isingsim: makefile isingsim.cpp external/fmt
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTOPTIONS) isingsim.cpp -o isingsim
 
 run: isingsim
@@ -26,11 +26,6 @@ run: isingsim
 external/fmt: external/get-fmt.sh
 	pushd external > /dev/null
 	./get-fmt.sh
-	popd > /dev/null
-
-external/memo: external/get-memo.sh
-	pushd external > /dev/null
-	./get-memo.sh
 	popd > /dev/null
 
 clean:
