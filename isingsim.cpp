@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <random>
 #include <span>
+#include <cassert>
 
 // Shorter static_cast
 template<class T>
@@ -31,6 +32,23 @@ template<std::size_t I, class... Ts>
 constexpr auto get(Ts&&... ts)
 {
   return std::get<I>(std::forward_as_tuple(ts...));
+}
+
+
+// Go to the next element of a multidimensional array
+template<class Space>
+constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
+{
+  for (std::size_t i = 0; i < Space::Dimension; ++i)
+  {
+    ++indexes[i];
+
+    if (indexes[i] >= Space::Sizes[i])
+      indexes[i] = 0;
+    else
+      return true;
+  }
+  return false;
 }
 
 
@@ -85,6 +103,9 @@ using Periodic_array_internal_base = decltype(make_periodic_array_internal_base<
 template<class T, std::size_t N, std::int64_t... S>
 struct Periodic_array_internal
 {
+
+public:
+
   static constexpr std::size_t Dimension = N;
   static constexpr std::array<std::int64_t, Dimension> Sizes{{S...}};
 
@@ -189,7 +210,7 @@ struct Periodic_array_internal
   }
 
 
-  // Return the 2D slice through the last 2 dimensions
+  // Return access to view the 2D slice through the last 2 dimensions
   constexpr const auto& slice2D() const
   {
     if constexpr (Dimension == 2)
@@ -203,6 +224,38 @@ struct Periodic_array_internal
   }
 
 
+  // Calculate the total megnetization in the system
+  constexpr std::int64_t get_base_magnetization() const
+  {
+    std::int64_t magnetization{};
+    std::array<std::int64_t, Dimension> indexes{};
+    do
+    {
+      magnetization += (*this)[indexes];
+    } while (increment<std::remove_reference_t<decltype(*this)>>(indexes));
+
+    return magnetization;
+  }
+
+
+  // Calculate the base energy in the system
+  constexpr std::int64_t get_base_energy() const
+  {
+    std::int64_t energy{};
+    std::array<std::int64_t, Dimension> indexes{};
+    do
+    {
+      energy += (*this).count_identical_interactions(indexes);
+    } while (increment<std::remove_reference_t<decltype(*this)>>(indexes));
+
+    assert(energy % 2 == 0);
+
+    return energy / 2;
+  }
+
+
+private:
+
   // Store
   Base base;
 };
@@ -210,23 +263,6 @@ struct Periodic_array_internal
 // Exposed Periodic_array (does not need Dimension template parameter, unlike Periodic_array_internal)
 template<class T, std::int64_t... Sizes>
 using Periodic_array = Periodic_array_internal<T, sizeof...(Sizes), Sizes...>;
-
-
-// Go to the next element of a multidimensional array
-template<class Space>
-constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
-{
-  for (std::size_t i = 0; i < Space::Dimension; ++i)
-  {
-    ++indexes[i];
-
-    if (indexes[i] >= Space::Sizes[i])
-      indexes[i] = 0;
-    else
-      return true;
-  }
-  return false;
-}
 
 
 constexpr bool SLICE  = true;
@@ -264,7 +300,6 @@ void make_ppm(Space& data, const std::string filename)
 
   std::ofstream graphfile("/tmp/" + tmp);
 
-  std::cout << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   graphfile << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   
   constexpr double layers = Slice_Instead_Of_Squish ? 1 : std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
@@ -277,8 +312,6 @@ void make_ppm(Space& data, const std::string filename)
     }
     graphfile << '\n';
   }
-
-  std::cout << "done generating ppm" << std::endl;
 
   graphfile.close();
 
@@ -319,7 +352,7 @@ int main(int argc, char* argv[])
 	}*/
 
   // Specify dimension and sizes
-  using Space = Periodic_array<bool, 16, 128, 128>;//8, 128, 256>; //dimensions
+  using Space = Periodic_array<bool, 128, 128, 256>;//8, 128, 256>; //dimensions
 
   // Create arrays
   Space space1;
@@ -412,7 +445,7 @@ int main(int argc, char* argv[])
   make_ppm<SQUISH>(space1, "000000.ppm");
 
   // Main loop
-  for (int i = 1; i <= 900; i++)
+  for (int i = 1; i <= 3000; i++)
   {
     step(space1, space2);
 
@@ -420,7 +453,11 @@ int main(int argc, char* argv[])
 
     step(space2, space1);
 
-    if (i%3==0) make_ppm<SQUISH>(space1, fmt::format("{:0>6}", i)+".ppm");
+    if (i%3==0)
+    {
+      fmt::print("energy: {},   magnetization: {}\n", space1.get_base_energy(), space1.get_base_magnetization());
+      make_ppm<SQUISH>(space1, fmt::format("{:0>6}", i)+".ppm");
+    }
   }
 
   return EXIT_SUCCESS;
