@@ -106,7 +106,7 @@ struct Periodic_array_internal
 
 public:
 
-  static constexpr std::size_t Dimension = N;
+  static constexpr std::size_t Dimension{N};
   static constexpr std::array<std::int64_t, Dimension> Sizes{{S...}};
 
   using Base = Periodic_array_internal_base<T, Dimension, S...>;
@@ -171,8 +171,21 @@ public:
 
 
   // Size
-  constexpr std::size_t size() const
+  consteval std::size_t size() const
   { return base.size(); }
+
+  // Total (recursive) number of elements
+  consteval std::size_t count() const
+  {
+    if constexpr (Dimension == 1)
+    {
+      return (*this).size();
+    }
+    else
+    {
+      return base[0].count() * (*this).size();
+    }
+  }
 
 
   // Fill with random data
@@ -265,8 +278,8 @@ template<class T, std::int64_t... Sizes>
 using Periodic_array = Periodic_array_internal<T, sizeof...(Sizes), Sizes...>;
 
 
-constexpr bool SLICE  = true;
-constexpr bool SQUISH = false;
+static constexpr bool SLICE  = true;
+static constexpr bool SQUISH = false;
 
 // Create a ppm file of a state, either squishing down extra dimensions into 2 or taking a 2D slice
 template<bool Slice_Instead_Of_Squish = SLICE, class Space>
@@ -276,7 +289,7 @@ void make_ppm(Space& data, const std::string filename)
 
   std::span<std::int64_t, 2> output_indexes = std::span(indexes).template last<2>();
 
-  constexpr std::array<std::int64_t, 2> output_sizes{Space::Sizes.end()[-2], Space::Sizes.end()[-1]};
+  static constexpr std::array<std::int64_t, 2> output_sizes{Space::Sizes.end()[-2], Space::Sizes.end()[-1]};
 
   std::array<std::array<double, output_sizes[1]>, output_sizes[0]> output{};
 
@@ -302,7 +315,7 @@ void make_ppm(Space& data, const std::string filename)
 
   graphfile << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   
-  constexpr double layers = Slice_Instead_Of_Squish ? 1 : std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
+  static constexpr double layers = Slice_Instead_Of_Squish ? 1 : std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
 
   for (auto& row : output)
   {
@@ -352,7 +365,7 @@ int main(int argc, char* argv[])
 	}*/
 
   // Specify dimension and sizes
-  using Space = Periodic_array<bool, 128, 128, 256>;//8, 128, 256>; //dimensions
+  using Space = Periodic_array<bool, 16, 128, 256>;//8, 128, 256>; //dimensions
 
   // Create arrays
   Space space1;
@@ -368,22 +381,20 @@ int main(int argc, char* argv[])
   space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
 
   // Map from number of identical adjacent spins to chance of flipping
-  constexpr auto flip_probabilities = []
+  static constexpr auto flip_probabilities = []
   {
     std::array<double, (2*Space::Dimension)+1> probability_table{};
 
-    for (std::size_t i = 0; i < probability_table.size(); i++) 
+    for (std::size_t i = 0; i < probability_table.size(); ++i) 
     {
       probability_table[i] = std::exp(-sc<double>((sc<std::int64_t>(i)-sc<std::int64_t>(Space::Dimension)) * 4)/1.0);
     }
     return probability_table;
   }();
 
-  // Perform one iteration with input start_space, outputting to end_space
-  const auto step = [&](auto& start_space, auto& end_space) constexpr
+  // Perform one iteration of the multi-flip metropolis algorithm with input start_space, outputting to end_space
+  const auto mfmstep [[maybe_unused]] = [&](auto& start_space, auto& end_space) constexpr
   {
-    /////// NEW CODE ///////
-    
     std::array<std::int64_t, Space::Dimension> indexes{};
 
     // Loop through all points
@@ -400,58 +411,45 @@ int main(int argc, char* argv[])
       end_space[indexes] = start_space[indexes] ^ ( flip_probabilities[start_space.count_identical_interactions(indexes)] > u(gen));
 
     } while (increment<Space>(indexes));
+  };
 
-    /////// OLD CODE ///////
+  // Create distributions to generate random indexes into the space
+  auto index_generators = []
+  {
+    std::array<std::uniform_int_distribution<std::int64_t>, Space::Dimension> generators;
 
-    /*for (std::size_t d = 0; d < start_space.size(); d++)
+    for (std::size_t i = 0; i < generators.size(); ++i)
     {
-      for (std::size_t r = 0; r < start_space[0].size(); r++)
-      {
-        for (std::size_t c = 0; c < start_space[0][0].size(); c++)
-        {
-          if (!(rb(gen)))
-          {
-            end_space[d,r,c] = start_space[d,r,c];
-            continue;
-          }
+      generators[i] = std::uniform_int_distribution<std::int64_t>(0, Space::Sizes[i] - 1);
+    }
+    return generators;
+  }(); 
 
-          const double Ediff = -(
-                                  (start_space[d,r,c] == start_space[d  ,r,  c-1])
-                                + (start_space[d,r,c] == start_space[d  ,r,  c+1])
-                                + (start_space[d,r,c] == start_space[d  ,r-1,c  ])
-                                + (start_space[d,r,c] == start_space[d  ,r+1,c  ])
-                                + (start_space[d,r,c] == start_space[d+1,r  ,c  ])
-                                + (start_space[d,r,c] == start_space[d-1,r  ,c  ])
-                                //+ (start_space[r,c] == start_space[r+1,c+1])
-                                //+ (start_space[r,c] == start_space[r-1,c-1])
-                                //+ (start_space[r,c] == start_space[r+1,c-1])
-                                //+ (start_space[r,c] == start_space[r-1,c+1])
-                                //+ (start_space[r,c] == start_space[r-1,c-1])
-                                //- 2) * -4;
-                                - 3) * -4;
+  // Perform one iteration of the original metripolis algorithm on space
+  const auto mstep [[maybe_unused]] = [&](auto& space) constexpr
+  {
+    std::array<std::int64_t, Space::Dimension> indexes{};
 
+    for (std::size_t i = 0; i < indexes.size(); ++i)
+    {
+      indexes[i] = index_generators[i](gen);
+    }
 
-          end_space[d,r,c] = start_space[d,r,c] 
-                           ^ ( ((Ediff<0) || ((memo_exp(-Ediff/1.0) > u(gen)))) 
-                               //&& rb(gen)
-                                              );
-                               //&& (0.8225 > u(gen)) );
-
-        }
-      }
-    }*/
+    space[indexes] ^= ( flip_probabilities[space.count_identical_interactions(indexes)] > u(gen));
   };
 
   make_ppm<SQUISH>(space1, "000000.ppm");
 
+  fmt::print("c: {}\n", space1.count());
+
   // Main loop
-  for (int i = 1; i <= 3000; i++)
+  for (int i = 1; i <= 900; i++)
   {
-    step(space1, space2);
+    //mfmstep(space1, space2);
+    //mfmstep(space2, space1);
 
-    //make_ppm(space2, fmt::format("{:0>6}", i)+"a.ppm");
-
-    step(space2, space1);
+    for (int j = 0; j < 2 * space1.count() * rb.p(); j++)
+      mstep(space1);
 
     if (i%3==0)
     {
@@ -462,7 +460,6 @@ int main(int argc, char* argv[])
 
   return EXIT_SUCCESS;
 }
-
 
 
 
