@@ -70,50 +70,22 @@ constexpr std::int64_t idt(const std::int64_t value, const std::int64_t max [[ma
   return value;
 }
 
-// Create Periodic_array struct
 
-// Forward declaration of internal Periodic_array implementaion
-template<class T, std::size_t Dimension, std::int64_t... Sizes>
-struct Periodic_array_internal;
-
-// Return an object of the type that a Periodic_array should contain
-// This function should never be called
-template<class T, std::size_t Dimension, std::int64_t Size0, std::int64_t... Other_sizes>
-consteval auto make_periodic_array_internal_base()
+// Struct used to store the state; just a looping mdarray with helpful functions
+template<class T, std::int64_t S0 = 0, std::int64_t... S>
+struct Periodic_array
 {
-  //std::unreachable(); //C++23, not yet implemented
-
-  static_assert(Dimension == sizeof...(Other_sizes) + 1, "Dimensional mismatch in make_periodic_array_internal_base_type");
-
-  if constexpr (Dimension != 1)
-  {
-    return std::array<Periodic_array_internal<T, Dimension - 1, Other_sizes...>, Size0>();
-  }
-  else
-  {
-    return std::array<T, Size0>();
-  }
-}
-
-// Use return type of above function
-template<class T, std::size_t Dimension, std::int64_t... Sizes>
-using Periodic_array_internal_base = decltype(make_periodic_array_internal_base<T, Dimension, Sizes...>());
-
-// Internal implementation of Periodic_array
-template<class T, std::size_t N, std::int64_t... S>
-struct Periodic_array_internal
-{
-
 public:
 
-  static constexpr std::size_t Dimension{N};
-  static constexpr std::array<std::int64_t, Dimension> Sizes{{S...}};
+  static_assert(S0 > 0, "Each dimension of a Periodic_array must have positive size.");
 
-  using Base = Periodic_array_internal_base<T, Dimension, S...>;
+  static constexpr std::size_t Dimension{sizeof...(S) + 1};
+  static constexpr std::array<std::int64_t, Dimension> Sizes{{S0, S...}};
+
+  using Base = std::array< std::conditional_t<Dimension == 1, T, Periodic_array<T, S...>>, S0 >;
   using Sub  = Base::value_type;
 
-  // Subtype should be underlying type if and only if we are 1-dimensional
-  static_assert((Dimension==1) == (std::is_same_v<Sub, T>));
+  static_assert((Dimension==1) == (std::is_same_v<Sub,T>), "In a Periodic_array, the subtype should be the same as the underlying type if and only if there is only 1 dimension.");
 
 
   // Subscript operators
@@ -272,10 +244,6 @@ private:
   // Store
   Base base;
 };
-
-// Exposed Periodic_array (does not need Dimension template parameter, unlike Periodic_array_internal)
-template<class T, std::int64_t... Sizes>
-using Periodic_array = Periodic_array_internal<T, sizeof...(Sizes), Sizes...>;
 
 
 static constexpr bool SLICE  = true;
