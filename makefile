@@ -4,7 +4,7 @@ SHELL=/bin/bash
 
 CC=g++
 
-CFLAGS=-std=c++2b -fsplit-stack -fno-rtti -fno-exceptions -fsanitize-undefined-trap-on-error -flto=auto -march=native -Wall -Wextra -Wdouble-promotion -Wstrict-aliasing=1 -Warith-conversion -Wpointer-arith -Wpedantic -Wno-variadic-macros -Wconversion -Wshadow
+CFLAGS=-std=c++2b -fsplit-stack -fno-rtti -fno-exceptions -fsanitize-undefined-trap-on-error -flto=auto -march=native -static -Wall -Wextra -Wdouble-promotion -Wstrict-aliasing=1 -Warith-conversion -Wpointer-arith -Wpedantic -Wno-variadic-macros -Wconversion -Wshadow
 
 INCLUDES=-isystem external/include
 
