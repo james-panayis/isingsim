@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <random>
 #include <span>
+#include <ranges>
 #include <cassert>
 
 // Shorter static_cast
@@ -275,12 +276,17 @@ void make_ppm(Space& data, const std::string filename)
   } while (increment<Space>(indexes));
 
   // Create temporary file
-  std::string tmp = "graphtest";
-  //std::stringstream tomakeuid(loc);
-  //while(std::getline(tomakeuid, tmp, '/')) {}
+  std::string tempfile = "/tmp/" + filename;
+  static auto& characters = "2345689abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ";
+  static std::mt19937 random_generator{std::random_device{}()};
+  static std::uniform_int_distribution<std::size_t> index(0, sizeof(characters) - 2);
 
-  std::ofstream graphfile("/tmp/" + tmp);
+  for (int i = 0; i < 20; i++)
+    tempfile += characters[index(random_generator)];
 
+  std::ofstream graphfile(tempfile);
+
+  // Write data to temporary file
   graphfile << "P3 " << output[0].size() << " " << output.size() << " 255" << std::endl;
   
   static constexpr double layers = Slice_Instead_Of_Squish ? 1 : std::accumulate(begin(Space::Sizes), end(Space::Sizes)-2, 1.0, std::multiplies<double>());
@@ -298,8 +304,8 @@ void make_ppm(Space& data, const std::string filename)
 
   // Copy temporary file to final location
   std::filesystem::remove(filename);
-  std::filesystem::copy("/tmp/" + tmp, filename);
-  std::filesystem::remove("/tmp/" + tmp);
+  std::filesystem::copy(tempfile, filename);
+  std::filesystem::remove(tempfile);
 }
 
 
@@ -340,10 +346,13 @@ int main(int argc, char* argv[])
   Space space2 [[maybe_unused]];
 
   // Create random number machinery
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<double> u(0.0, std::nextafter(1.0, std::numeric_limits<double>::max()));
-  std::bernoulli_distribution rb(0.12); //fraction of states to examine on each pass
+  std::random_device source;
+  const auto random_data = std::views::iota(std::size_t(), (std::mt19937::state_size * sizeof(typename std::mt19937::result_type) - 1) / sizeof(source()) + 1)
+                           | std::views::transform([&](auto){ return source(); });
+  std::seed_seq seeds(std::begin(random_data), std::end(random_data));
+  std::mt19937 gen(seeds);
+  std::uniform_real_distribution<double> uniform0to1(0.0, std::nextafter(1.0, std::numeric_limits<double>::max()));
+  std::bernoulli_distribution fraction_per_pass(0.12); //fraction of states to examine on each pass
 
   // Randomize initial state
   space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
@@ -369,14 +378,14 @@ int main(int argc, char* argv[])
     do
     {
       // Keep state
-      if (!(rb(gen)))
+      if (!(fraction_per_pass(gen)))
       {
         end_space[indexes] = start_space[indexes];
         continue;
       }
 
       // Examine and possibly flip state
-      end_space[indexes] = start_space[indexes] ^ ( flip_probabilities[start_space.count_identical_interactions(indexes)] > u(gen));
+      end_space[indexes] = start_space[indexes] ^ ( flip_probabilities[start_space.count_identical_interactions(indexes)] > uniform0to1(gen));
 
     } while (increment<Space>(indexes));
   };
@@ -403,7 +412,7 @@ int main(int argc, char* argv[])
       indexes[i] = index_generators[i](gen);
     }
 
-    space[indexes] ^= ( flip_probabilities[space.count_identical_interactions(indexes)] > u(gen));
+    space[indexes] ^= ( flip_probabilities[space.count_identical_interactions(indexes)] > uniform0to1(gen));
   };
 
   make_ppm<SQUISH>(space1, "000000.ppm");
@@ -416,7 +425,7 @@ int main(int argc, char* argv[])
     //mfmstep(space1, space2);
     //mfmstep(space2, space1);
 
-    for (int j = 0; j < 2 * space1.count() * rb.p(); j++)
+    for (int j = 0; j < 2 * space1.count() * fraction_per_pass.p(); j++)
       mstep(space1);
 
     if (i%3==0)
