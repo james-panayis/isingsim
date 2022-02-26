@@ -4,19 +4,20 @@ SHELL=/bin/bash
 
 CC=g++
 
-CFLAGS=-std=c++2b -fsplit-stack -fno-rtti -fno-exceptions -fsanitize-undefined-trap-on-error -flto=auto -march=native -static -Wall -Wextra -Wdouble-promotion -Wstrict-aliasing=1 -Warith-conversion -Wpointer-arith -Wpedantic -Wno-variadic-macros -Wconversion -Wshadow
+CFLAGS=-std=c++2b -fsplit-stack -fno-rtti -fno-exceptions -fsanitize-undefined-trap-on-error -flto=auto -march=native -Wall -Wextra -Wdouble-promotion -Wstrict-aliasing=1 -Warith-conversion -Wpointer-arith -Wpedantic -Wno-variadic-macros -Wconversion -Wshadow
 
 INCLUDES=-isystem external/include
 
 DEPS= isingsim.cpp makefile
 
-OPTOPTIONS=-O3
+OPTOPTIONS=-O3 -static
 DBGOPTIONS=-g -fsanitize=address -static-libasan
 
 all: isingsim makefile
 
 isingsim: makefile isingsim.cpp external/fmt
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTOPTIONS) isingsim.cpp -o isingsim
+	strip isingsim
 
 run: isingsim
 	rm *.ppm

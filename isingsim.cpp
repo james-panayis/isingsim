@@ -4,6 +4,7 @@
 
 #define FMT_HEADER_ONLY 1
 #include "fmt/format.h"
+#include "fmt/compile.h"
 
 #include <iostream>
 #include <fstream>
@@ -40,7 +41,7 @@ constexpr auto get(Ts&&... ts)
 template<class Space>
 constexpr bool increment(std::array<std::int64_t, Space::Dimension>& indexes)
 {
-  for (std::size_t i = 0; i < Space::Dimension; ++i)
+  for (std::size_t i = Space::Dimension - 1; i < Space::Dimension; --i)
   {
     ++indexes[i];
 
@@ -254,6 +255,11 @@ static constexpr bool SQUISH = false;
 template<bool Slice_Instead_Of_Squish = SLICE, class Space>
 void make_ppm(Space& data, const std::string filename)
 {
+  if constexpr (Space::Dimension <= 1)
+  {
+    return;
+  }
+
   std::array<std::int64_t, Space::Dimension> indexes{};
 
   std::span<std::int64_t, 2> output_indexes = std::span(indexes).template last<2>();
@@ -338,10 +344,20 @@ int main(int argc, char* argv[])
 		return return_value;
 	}*/
 
-  // Specify dimension and sizes
-  using Space = Periodic_array<bool, 16, 128, 256>;//8, 128, 256>; //dimensions
+  // Specify dimension and size(s)
+  using Space = Periodic_array<bool, 32, 128, 256>;//8, 128, 256>; //dimensions
+
+  // Stringify size info
+  std::string dimensions_string = "-" + std::to_string(Space::Dimension) + "D-";
+  for (auto s : Space::Sizes)
+    dimensions_string += std::to_string(s) + "x";
+  dimensions_string.pop_back();
+
+  // Set temperature
+  double temperature_factor{};
 
   // Create arrays
+  Space spaceorig;
   Space space1;
   Space space2 [[maybe_unused]];
 
@@ -352,25 +368,22 @@ int main(int argc, char* argv[])
   std::seed_seq seeds(std::begin(random_data), std::end(random_data));
   std::mt19937 gen(seeds);
   std::uniform_real_distribution<double> uniform0to1(0.0, std::nextafter(1.0, std::numeric_limits<double>::max()));
-  std::bernoulli_distribution fraction_per_pass(0.12); //fraction of states to examine on each pass
-
-  // Randomize initial state
-  space1.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
+  std::bernoulli_distribution fraction_per_pass(0.1); //fraction of states to examine on each pass
 
   // Map from number of identical adjacent spins to chance of flipping
-  static constexpr auto flip_probabilities = []
-  {
-    std::array<double, (2*Space::Dimension)+1> probability_table{};
+  std::array<double, (2*Space::Dimension)+1> flip_probabilities;
 
-    for (std::size_t i = 0; i < probability_table.size(); ++i) 
+  const auto initialize_probabilities = [&]
+  {
+    for (std::size_t i = 0; i < flip_probabilities.size(); ++i) 
     {
-      probability_table[i] = std::exp(-sc<double>((sc<std::int64_t>(i)-sc<std::int64_t>(Space::Dimension)) * 4)/1.0);
+      flip_probabilities[i] = std::exp(-sc<double>((sc<std::int64_t>(i)-sc<std::int64_t>(Space::Dimension)) * 4)/(temperature_factor*2.0*Space::Dimension));
     }
-    return probability_table;
-  }();
+  };
+
 
   // Perform one iteration of the multi-flip metropolis algorithm with input start_space, outputting to end_space
-  const auto mfmstep [[maybe_unused]] = [&](auto& start_space, auto& end_space) constexpr
+  const auto mfmstep [[maybe_unused]] = [&](const auto& start_space, auto& end_space) constexpr
   {
     std::array<std::int64_t, Space::Dimension> indexes{};
 
@@ -412,28 +425,73 @@ int main(int argc, char* argv[])
       indexes[i] = index_generators[i](gen);
     }
 
-    space[indexes] ^= ( flip_probabilities[space.count_identical_interactions(indexes)] > uniform0to1(gen));
+    space[indexes] ^= (flip_probabilities[space.count_identical_interactions(indexes)] > uniform0to1(gen));
   };
 
-  make_ppm<SQUISH>(space1, "000000.ppm");
+  std::vector<std::vector<std::vector<std::int64_t>>> output_stats;
 
-  fmt::print("c: {}\n", space1.count());
+  static constexpr int repeats = 1;
 
-  // Main loop
-  for (int i = 1; i <= 900; i++)
+  //static constexpr std::array<double, 10> temperatures{{0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5}};
+  static constexpr std::array<double, 1> temperatures{{0.5}};
+
+  for (auto& temperature : temperatures)
   {
-    //mfmstep(space1, space2);
-    //mfmstep(space2, space1);
+    fmt::print(FMT_COMPILE("starting temperature {}\n"), temperature);
+    temperature_factor = temperature;
+    std::string temperature_string = std::to_string(temperature);
 
-    for (int j = 0; j < 2 * space1.count() * fraction_per_pass.p(); j++)
-      mstep(space1);
+    initialize_probabilities();
 
-    if (i%3==0)
+
+    // Experiment repeat loop
+    for (int repeat = 0; repeat < repeats; ++repeat)
     {
-      fmt::print("energy: {},   magnetization: {}\n", space1.get_base_energy(), space1.get_base_magnetization());
-      make_ppm<SQUISH>(space1, fmt::format("{:0>6}", i)+".ppm");
+      fmt::print(FMT_COMPILE("starting repeat {}\n"), repeat);
+    
+      output_stats.resize(output_stats.size() + 1);
+
+      // Randomize initial state
+      spaceorig.randomize(std::bernoulli_distribution{0.5}, gen); //chance of up state
+      space1 = spaceorig;
+
+      make_ppm<SQUISH>(space1, "000000" + dimensions_string + ".ppm");
+
+      // Main loop
+      for (int i = 1; i <= 300 * 5; ++i)
+      {
+        mfmstep(space1, space2);
+        mfmstep(space2, space1);
+
+        //for (std::size_t j = 0; j < space1.count(); j++)
+        //  mstep(space1);
+
+        if (i%1==0)
+        {
+          output_stats.back().push_back({space1.get_base_energy(), space1.get_base_magnetization()});
+          make_ppm<SQUISH>(space1, fmt::format(FMT_COMPILE("{:0>6}{}.ppm"), i, dimensions_string));
+        }
+      }
     }
   }
+
+
+  // Print result stats to a csv
+
+  std::string sf = "stats" + dimensions_string + ".csv";
+  std::ofstream statsfile(sf);
+
+  for (std::size_t i = 0; i < output_stats[0].size(); ++i)
+  {
+    for (std::size_t j = 0; j < output_stats.size(); ++j)
+    {
+      assert(output_stats[0].size() == output_stats[j].size());
+      statsfile << output_stats[j][i][0] << ", " << output_stats[j][i][1] << ", ";
+    }
+    statsfile << "\n";
+  }
+
+  statsfile.close();
 
   return EXIT_SUCCESS;
 }
