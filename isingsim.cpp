@@ -432,6 +432,7 @@ int main(int argc, char* argv[])
 
   static constexpr int repeats = 1;
 
+  // Multiples of the critical value in the ferromagnetic model
   //static constexpr std::array<double, 10> temperatures{{0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5}};
   static constexpr std::array<double, 1> temperatures{{0.5}};
 
